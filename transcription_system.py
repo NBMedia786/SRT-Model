@@ -170,6 +170,11 @@ class ProfessionalTranscriber:
 
         # Load model
         logger.info(f"Loading Faster-Whisper model: {model_size}")
+        if torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
+        print(f"selected device:{device}")
         self.model = WhisperModel(
             model_size,
             device=device,
@@ -421,8 +426,3 @@ if __name__ == "__main__":
         print(f"  Transcript Length: {item['length']} chars")
         print(f"  Time Taken: {item['transcription_time']:.2f} sec\n")
     print(f"✅ {len(summary)} files processed. SRTs saved in {OUTPUT_DIR}")
-
-
-
-
-
