@@ -179,42 +179,39 @@ class ProfessionalTranscriber:
         )
         logger.info("Model loaded successfully")
 
-    def transcribe_audio(self, audio_path: str, language: str = "en",
-                        #  vad_filter: bool = True, vad_parameters: dict = None) -> Dict[str, Any]:
-                         vad_filter: bool = False, vad_parameters: dict = None) -> Dict[str, Any]:
-        """Transcribe audio with optimal settings"""
+    
 
-        # Default VAD parameters optimized for your use case
+    def transcribe_audio(self, audio_path: str, language: str = "en",
+                     vad_filter: bool = True, vad_parameters: dict = None) -> Dict[str, Any]:
+        """Transcribe audio with reduced hallucination"""
+        # Stricter VAD parameters to reduce hallucinations
         if vad_parameters is None:
             vad_parameters = {
-                "threshold": 0.5,
-                "min_speech_duration_ms": 250,
-                "max_speech_duration_s": 30,
-                "min_silence_duration_ms": 100,
-
-                "speech_pad_ms": 400
+                "threshold": 0.6,
+                "min_speech_duration_ms": 500,
+                "max_speech_duration_s": 20,
+                "min_silence_duration_ms": 300,
+                "speech_pad_ms": 200
             }
 
         # Preprocess audio
-        audio, sr, speech_segments = self.preprocessor.preprocess_audio(
-            audio_path)
-
+        audio, sr, speech_segments = self.preprocessor.preprocess_audio(audio_path)
         audio = audio.astype(np.float32)
 
         logger.info("Starting transcription...")
         start_time = time.time()
 
-        # Transcribe with optimal parameters
+        # Transcribe with reduced hallucination settings
         segments, info = self.model.transcribe(
             audio,
             language=language,
-            beam_size=5,  # Good balance of accuracy and speed
-            best_of=5,    # Multiple candidates for better accuracy
-            temperature=0.0,  # Deterministic output
-            condition_on_previous_text=True,  # Better context awareness
+            beam_size=1,
+            best_of=1,
+            temperature=0.0,
+            condition_on_previous_text=False,
             vad_filter=vad_filter,
             vad_parameters=vad_parameters,
-            word_timestamps=True,  # For better SRT timing
+            word_timestamps=True,
             initial_prompt="This is a professional transcription. Please be accurate with technical terms, proper nouns, and punctuation."
         )
 
@@ -232,16 +229,14 @@ class ProfessionalTranscriber:
                 "words": []
             }
 
-            # Add word-level timestamps if available
             if hasattr(segment, 'words') and segment.words:
                 for word in segment.words:
-                    word_dict = {
+                    segment_dict["words"].append({
                         "start": word.start,
                         "end": word.end,
-                        "word": word.word,
+                        "word": word.word.strip(),
                         "confidence": word.probability
-                    }
-                    segment_dict["words"].append(word_dict)
+                    })
 
             transcription_segments.append(segment_dict)
             full_text.append(segment.text.strip())
@@ -260,11 +255,9 @@ class ProfessionalTranscriber:
         }
 
         logger.info(f"Transcription completed in {end_time - start_time:.2f}s")
-        logger.info(
-            f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
+        logger.info(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
 
         return results
-
 
 
 # // single spcae between words
@@ -272,10 +265,77 @@ class ProfessionalTranscriber:
 
 
 
-    def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 5) -> str:
-        """Generate SRT subtitle file with a maximum number of words per line, using word-level timestamps if available.
-        Ensures only single spaces between words in each line.
-        """
+    # def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 5) -> str:
+    #     """Generate SRT subtitle file with a maximum number of words per line, using word-level timestamps if available.
+    #     Ensures only single spaces between words in each line.
+    #     """
+    #     import re
+    #     if output_path is None:
+    #         output_path = "transcription.srt"
+
+    #     srt_content = []
+    #     counter = 1
+
+    #     for segment in results["segments"]:
+    #         words = segment.get("words", [])
+    #         # If we have word-level timestamps, use them to split and timestamp lines
+    #         if words and len(words) > 1:
+    #             line = []
+    #             for idx, word in enumerate(words):
+    #                 # Ensure word has no leading/trailing spaces
+    #                 w = word.copy()
+    #                 w['word'] = w['word'].strip()
+    #                 line.append(w)
+    #                 # If line full or last word
+    #                 if len(line) == max_words_per_line or idx == len(words) - 1:
+    #                     start_time = line[0]['start'] if 'start' in line[0] else segment['start']
+    #                     end_time = line[-1]['end'] if 'end' in line[-1] else segment['end']
+    #                     # Join with single space and collapse any double spaces
+    #                     text = " ".join(w['word'] for w in line)
+    #                     text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
+    #                     srt_content.append(f"{counter}")
+    #                     srt_content.append(
+    #                         f"{self.seconds_to_srt_time(start_time)} --> {self.seconds_to_srt_time(end_time)}")
+    #                     srt_content.append(text)
+    #                     srt_content.append("")  # Empty line between segments
+    #                     counter += 1
+    #                     line = []
+    #         else:
+    #             # Fallback: Split by text if no word timestamps available
+    #             text_words = [w.strip() for w in segment["text"].split()]
+    #             start_time = segment["start"]
+    #             end_time = segment["end"]
+    #             total_words = len(text_words)
+    #             duration = end_time - start_time
+
+    #             for i in range(0, total_words, max_words_per_line):
+    #                 line_words = text_words[i:i+max_words_per_line]
+    #                 # Calculate proportional times
+    #                 line_start = start_time + (i / total_words) * duration
+    #                 line_end = start_time + \
+    #                     (min(i+max_words_per_line, total_words) / total_words) * duration
+    #                 text = " ".join(line_words)
+    #                 text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
+    #                 srt_content.append(f"{counter}")
+    #                 srt_content.append(
+    #                     f"{self.seconds_to_srt_time(line_start)} --> {self.seconds_to_srt_time(line_end)}")
+    #                 srt_content.append(text)
+    #                 srt_content.append("")
+    #                 counter += 1
+
+    #     # Write to file
+    #     with open(output_path, 'w', encoding='utf-8') as f:
+    #         f.write("\n".join(srt_content))
+
+    #     logger.info(f"SRT file saved: {output_path}")
+    #     return output_path
+
+
+
+
+
+    def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 7) -> str:
+        """Generate SRT subtitle file, with line break on '.', '?', '!' or max_words_per_line. Keeps single spacing."""
         import re
         if output_path is None:
             output_path = "transcription.srt"
@@ -285,52 +345,53 @@ class ProfessionalTranscriber:
 
         for segment in results["segments"]:
             words = segment.get("words", [])
-            # If we have word-level timestamps, use them to split and timestamp lines
             if words and len(words) > 1:
                 line = []
                 for idx, word in enumerate(words):
-                    # Ensure word has no leading/trailing spaces
                     w = word.copy()
-                    w['word'] = w['word'].strip()
+                    w["word"] = w["word"].strip()
                     line.append(w)
-                    # If line full or last word
-                    if len(line) == max_words_per_line or idx == len(words) - 1:
-                        start_time = line[0]['start'] if 'start' in line[0] else segment['start']
-                        end_time = line[-1]['end'] if 'end' in line[-1] else segment['end']
-                        # Join with single space and collapse any double spaces
-                        text = " ".join(w['word'] for w in line)
-                        text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
+
+                    is_last_word = idx == len(words) - 1
+                    is_sentence_end = re.search(r'[.?!]$', w["word"]) is not None
+                    is_max_words = len(line) >= max_words_per_line
+
+                    if is_sentence_end or is_max_words or is_last_word:
+                        start_time = line[0]["start"]
+                        end_time = line[-1]["end"]
+                        text = " ".join(w["word"] for w in line)
+                        text = re.sub(r'\s+', ' ', text).strip()
+
                         srt_content.append(f"{counter}")
                         srt_content.append(
-                            f"{self.seconds_to_srt_time(start_time)} --> {self.seconds_to_srt_time(end_time)}")
+                            f"{self.seconds_to_srt_time(start_time)} --> {self.seconds_to_srt_time(end_time)}"
+                        )
                         srt_content.append(text)
-                        srt_content.append("")  # Empty line between segments
+                        srt_content.append("")  # blank line
                         counter += 1
                         line = []
             else:
-                # Fallback: Split by text if no word timestamps available
+                # Fallback without word timestamps
                 text_words = [w.strip() for w in segment["text"].split()]
                 start_time = segment["start"]
                 end_time = segment["end"]
-                total_words = len(text_words)
                 duration = end_time - start_time
+                total_words = len(text_words)
 
                 for i in range(0, total_words, max_words_per_line):
-                    line_words = text_words[i:i+max_words_per_line]
-                    # Calculate proportional times
+                    line_words = text_words[i:i + max_words_per_line]
                     line_start = start_time + (i / total_words) * duration
-                    line_end = start_time + \
-                        (min(i+max_words_per_line, total_words) / total_words) * duration
+                    line_end = start_time + (min(i + max_words_per_line, total_words) / total_words) * duration
                     text = " ".join(line_words)
-                    text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
+                    text = re.sub(r'\s+', ' ', text).strip()
                     srt_content.append(f"{counter}")
                     srt_content.append(
-                        f"{self.seconds_to_srt_time(line_start)} --> {self.seconds_to_srt_time(line_end)}")
+                        f"{self.seconds_to_srt_time(line_start)} --> {self.seconds_to_srt_time(line_end)}"
+                    )
                     srt_content.append(text)
                     srt_content.append("")
                     counter += 1
 
-        # Write to file
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write("\n".join(srt_content))
 
@@ -349,6 +410,22 @@ class ProfessionalTranscriber:
         seconds = int(seconds)
 
         return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
+
+    def generate_txt(self, results: Dict[str, Any], output_path: str = None) -> str:
+        """Generate plain text transcript from full_text"""
+        if output_path is None:
+            output_path = "transcription.txt"
+
+        text = results.get("full_text", "").strip()
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+        logger.info(f"TXT file saved: {output_path}")
+        return output_path
+
     
 
 
@@ -377,8 +454,22 @@ def transcribe_files(audio_file_paths: List[str], output_dir: str = ".", model_s
             language="en",
             vad_filter=True
         )
+        # transcriber.generate_srt(results, srt_path)
+        # logger.info(f"Transcription complete for {audio_file_path}, SRT saved to {srt_path}")
+
+        # Generate SRT
         transcriber.generate_srt(results, srt_path)
-        logger.info(f"Transcription complete for {audio_file_path}, SRT saved to {srt_path}")
+
+        # Generate TXT
+        txt_path = os.path.join(output_dir, f"{base_name}.txt")
+        transcriber.generate_txt(results, txt_path)
+
+        logger.info(f"Transcription complete for {audio_file_path}")
+        logger.info(f"SRT saved to: {srt_path}")
+        logger.info(f"TXT saved to: {txt_path}")
+
+
+
 
         summary.append({
             "file": audio_file_path,
@@ -395,7 +486,7 @@ if __name__ == "__main__":
     import glob
 
     # Default settings
-    AUDIO_FILE_PATHS = [r"D:\office work audios\1.mp3"]  # List of files by default
+    AUDIO_FILE_PATHS = [r"D:\office work audios\ryan interrogation.mp3"]  # List of files by default
     OUTPUT_DIR = "./transcriptions"
     MODEL_SIZE = "large-v3"
 
@@ -421,7 +512,6 @@ if __name__ == "__main__":
         print(f"  Transcript Length: {item['length']} chars")
         print(f"  Time Taken: {item['transcription_time']:.2f} sec\n")
     print(f"✅ {len(summary)} files processed. SRTs saved in {OUTPUT_DIR}")
-
 
 
 
