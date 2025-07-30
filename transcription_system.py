@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 import warnings
 warnings.filterwarnings("ignore")
+import google.generativeai as genai
+
+# Add your Gemini API Key (replace with your actual API key)
+genai.configure(api_key="AIzaSyC3p09mmCQTc_hilWg9gIpD-Lsae9bn_RU")
+# print([m.name for m in genai.list_models()])
+
 
 # Core libraries
 
@@ -170,11 +176,6 @@ class ProfessionalTranscriber:
 
         # Load model
         logger.info(f"Loading Faster-Whisper model: {model_size}")
-        if torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
-        print(f"selected device:{device}")
         self.model = WhisperModel(
             model_size,
             device=device,
@@ -264,79 +265,31 @@ class ProfessionalTranscriber:
 
         return results
 
-
-# // single spcae between words
-
-
-
-
-    # def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 5) -> str:
-    #     """Generate SRT subtitle file with a maximum number of words per line, using word-level timestamps if available.
-    #     Ensures only single spaces between words in each line.
-    #     """
-    #     import re
-    #     if output_path is None:
-    #         output_path = "transcription.srt"
-
-    #     srt_content = []
-    #     counter = 1
-
-    #     for segment in results["segments"]:
-    #         words = segment.get("words", [])
-    #         # If we have word-level timestamps, use them to split and timestamp lines
-    #         if words and len(words) > 1:
-    #             line = []
-    #             for idx, word in enumerate(words):
-    #                 # Ensure word has no leading/trailing spaces
-    #                 w = word.copy()
-    #                 w['word'] = w['word'].strip()
-    #                 line.append(w)
-    #                 # If line full or last word
-    #                 if len(line) == max_words_per_line or idx == len(words) - 1:
-    #                     start_time = line[0]['start'] if 'start' in line[0] else segment['start']
-    #                     end_time = line[-1]['end'] if 'end' in line[-1] else segment['end']
-    #                     # Join with single space and collapse any double spaces
-    #                     text = " ".join(w['word'] for w in line)
-    #                     text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
-    #                     srt_content.append(f"{counter}")
-    #                     srt_content.append(
-    #                         f"{self.seconds_to_srt_time(start_time)} --> {self.seconds_to_srt_time(end_time)}")
-    #                     srt_content.append(text)
-    #                     srt_content.append("")  # Empty line between segments
-    #                     counter += 1
-    #                     line = []
-    #         else:
-    #             # Fallback: Split by text if no word timestamps available
-    #             text_words = [w.strip() for w in segment["text"].split()]
-    #             start_time = segment["start"]
-    #             end_time = segment["end"]
-    #             total_words = len(text_words)
-    #             duration = end_time - start_time
-
-    #             for i in range(0, total_words, max_words_per_line):
-    #                 line_words = text_words[i:i+max_words_per_line]
-    #                 # Calculate proportional times
-    #                 line_start = start_time + (i / total_words) * duration
-    #                 line_end = start_time + \
-    #                     (min(i+max_words_per_line, total_words) / total_words) * duration
-    #                 text = " ".join(line_words)
-    #                 text = re.sub(r'\s+', ' ', text)  # Ensure only single spaces
-    #                 srt_content.append(f"{counter}")
-    #                 srt_content.append(
-    #                     f"{self.seconds_to_srt_time(line_start)} --> {self.seconds_to_srt_time(line_end)}")
-    #                 srt_content.append(text)
-    #                 srt_content.append("")
-    #                 counter += 1
-
-    #     # Write to file
-    #     with open(output_path, 'w', encoding='utf-8') as f:
-    #         f.write("\n".join(srt_content))
-
-    #     logger.info(f"SRT file saved: {output_path}")
-    #     return output_path
-
-
-
+    def diarize_with_gemini(self, transcript: str, prompt: str = None) -> str:
+        """
+        Uses Gemini LLM to perform speaker diarization on the transcript.
+        Returns diarized transcript as a string (labelled by speaker).
+        """
+        if prompt is None:
+            prompt = (
+                "You are an expert at identifying speakers in transcripts. "
+                "Given the following transcript, segment it by speaker, label each block as 'Speaker 1:', 'Speaker 2:', etc. "
+                "Change speaker whenever a new person likely talks. "
+                "Do NOT add or invent content, only label the transcript with speakers. Transcript:\n\n"
+            )
+        input_text = prompt + transcript
+        # Call Gemini
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        response = model.generate_content(input_text, generation_config={"max_output_tokens": 4096})
+        # Handle Gemini content block gracefully
+        if not getattr(response, "candidates", None):
+            block_info = getattr(response, "prompt_feedback", None)
+            reason = getattr(block_info, "block_reason", "UNKNOWN") if block_info else "UNKNOWN"
+            logger.error(f"Gemini blocked the prompt: {reason}")
+            # You can log the input_text or save for debugging, or just return a message.
+            return f"[Gemini diarization failed: prompt was blocked ({reason})]"
+        diarized = response.text
+        return diarized
 
 
     def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 7) -> str:
@@ -437,48 +390,91 @@ class ProfessionalTranscriber:
 
 # ... [rest of your imports and class definitions stay the same] ...
 
-def transcribe_files(audio_file_paths: List[str], output_dir: str = ".", model_size: str = "large-v3"):
-    """
-    Transcribe a list of audio files and save their SRT files.
-    """
-    # Initialize transcriber once for efficiency
+# def transcribe_files(audio_file_paths: List[str], output_dir: str = ".", model_size: str = "large-v3"):
+#     """
+#     Transcribe a list of audio files and save their SRT files.
+#     """
+#     # Initialize transcriber once for efficiency
+#     transcriber = ProfessionalTranscriber(model_size=model_size)
+#     summary = []
+
+#     for audio_file_path in audio_file_paths:
+#         if not os.path.exists(audio_file_path):
+#             logger.error(f"Audio file not found: {audio_file_path}")
+#             continue
+
+#         base_name = Path(audio_file_path).stem
+#         srt_path = os.path.join(output_dir, f"{base_name}.srt")
+
+#         # Transcribe
+#         results = transcriber.transcribe_audio(
+#             audio_path=audio_file_path,
+#             language="en",
+#             vad_filter=True
+#         )
+#         # transcriber.generate_srt(results, srt_path)
+#         # logger.info(f"Transcription complete for {audio_file_path}, SRT saved to {srt_path}")
+
+#         # Generate SRT
+#         transcriber.generate_srt(results, srt_path)
+
+#         # Generate TXT
+#         txt_path = os.path.join(output_dir, f"{base_name}.txt")
+#         transcriber.generate_txt(results, txt_path)
+
+#         logger.info(f"Transcription complete for {audio_file_path}")
+#         logger.info(f"SRT saved to: {srt_path}")
+#         logger.info(f"TXT saved to: {txt_path}")
+
+
+
+
+#         summary.append({
+#             "file": audio_file_path,
+#             "srt": srt_path,
+#             "duration": results['duration'],
+#             "language": results['language'],
+#             "probability": results['language_probability'],
+#             "transcription_time": results['transcription_time'],
+#             "length": len(results['full_text'])
+#         })
+#     return summary
+
+
+
+def transcribe_files(audio_file_paths: list, output_dir: str = ".", model_size: str = "large-v3"):
     transcriber = ProfessionalTranscriber(model_size=model_size)
     summary = []
-
     for audio_file_path in audio_file_paths:
         if not os.path.exists(audio_file_path):
             logger.error(f"Audio file not found: {audio_file_path}")
             continue
-
         base_name = Path(audio_file_path).stem
         srt_path = os.path.join(output_dir, f"{base_name}.srt")
-
-        # Transcribe
         results = transcriber.transcribe_audio(
             audio_path=audio_file_path,
             language="en",
             vad_filter=True
         )
-        # transcriber.generate_srt(results, srt_path)
-        # logger.info(f"Transcription complete for {audio_file_path}, SRT saved to {srt_path}")
-
-        # Generate SRT
+        # SRT
         transcriber.generate_srt(results, srt_path)
-
-        # Generate TXT
+        # TXT
         txt_path = os.path.join(output_dir, f"{base_name}.txt")
         transcriber.generate_txt(results, txt_path)
-
+        # Gemini diarization
+        diarized_text = transcriber.diarize_with_gemini(results["full_text"])
+        diarized_txt_path = os.path.join(output_dir, f"{base_name}_diarized.txt")
+        with open(diarized_txt_path, 'w', encoding='utf-8') as f:
+            f.write(diarized_text)
+        logger.info(f"Diarized TXT saved to: {diarized_txt_path}")
         logger.info(f"Transcription complete for {audio_file_path}")
         logger.info(f"SRT saved to: {srt_path}")
         logger.info(f"TXT saved to: {txt_path}")
-
-
-
-
         summary.append({
             "file": audio_file_path,
             "srt": srt_path,
+            "txt": txt_path,
+            "diarized_txt": diarized_txt_path,
             "duration": results['duration'],
             "language": results['language'],
             "probability": results['language_probability'],
@@ -487,11 +483,19 @@ def transcribe_files(audio_file_paths: List[str], output_dir: str = ".", model_s
         })
     return summary
 
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     import glob
 
     # Default settings
-    AUDIO_FILE_PATHS = [r"D:\office work audios\ryan interrogation.mp3"]  # List of files by default
+    AUDIO_FILE_PATHS = [r"D:\office work audios\alexandra.wav"]  # List of files by default
     OUTPUT_DIR = "./transcriptions"
     MODEL_SIZE = "large-v3"
 
@@ -517,3 +521,7 @@ if __name__ == "__main__":
         print(f"  Transcript Length: {item['length']} chars")
         print(f"  Time Taken: {item['transcription_time']:.2f} sec\n")
     print(f"✅ {len(summary)} files processed. SRTs saved in {OUTPUT_DIR}")
+
+
+
+
