@@ -4,3 +4,4 @@ librosa
 webrtcvad 
 soundfile 
 scipy
+pyannote.audio

@@ -5,6 +5,7 @@ from scipy import signal
 import soundfile as sf
 import librosa
 from faster_whisper import WhisperModel
+from pyannote.audio import Pipeline
 import numpy as np
 import torch
 import os
@@ -13,6 +14,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
+import re
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -156,11 +158,96 @@ class AudioPreprocessor:
 
         return audio, sr, speech_segments
 
+class SpeakerDiarizer:
+    """
+    Uses pyannote.audio to perform speaker diarization and merges it with
+    Whisper word-level transcription for speaker-attributed SRT output.
+    """
+    def __init__(self, pyannote_token: str):
+        self.pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization",
+            use_auth_token=pyannote_token
+        )
+        logger.info("Loaded pyannote speaker diarization pipeline.")
+
+    def diarize_audio(self, audio_path: str):
+        """
+        Run speaker diarization and return speaker segments.
+        """
+        diarization = self.pipeline(audio_path)
+        speaker_segments = []
+
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            speaker_segments.append({
+                "start": turn.start,
+                "end": turn.end,
+                "speaker": speaker
+            })
+
+        return speaker_segments
+
+    def merge_transcript_with_speakers(
+        self, whisper_segments: List[Dict], speaker_segments: List[Dict], output_srt_path: str
+    ):
+        """
+        Assign each word to the correct speaker and output speaker-attributed SRT.
+        """
+        srt_output = []
+        counter = 1
+
+        all_words = [
+            {**word, "segment_id": segment["id"]}
+            for segment in whisper_segments for word in segment.get("words", [])
+        ]
+
+        word_idx = 0
+        for segment in speaker_segments:
+            speaker = segment["speaker"]
+            start_time = segment["start"]
+            end_time = segment["end"]
+
+            current_words = []
+            while word_idx < len(all_words) and all_words[word_idx]["start"] < end_time:
+                word = all_words[word_idx]
+                if word["end"] > start_time:
+                    current_words.append(word)
+                word_idx += 1
+
+            if not current_words:
+                continue
+
+            # Format speaker line
+            speaker_line = f"{counter}"
+            time_line = f"{self.seconds_to_srt_time(start_time)} --> {self.seconds_to_srt_time(end_time)}"
+            text_line = f"{speaker}: " + " ".join(w["word"] for w in current_words)
+            text_line = re.sub(r'\s+', ' ', text_line.strip())  # Normalize whitespace
+
+            srt_output.append(speaker_line)
+            srt_output.append(time_line)
+            srt_output.append(text_line)
+            srt_output.append("")
+            counter += 1
+
+        with open(output_srt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(srt_output))
+
+        logger.info(f"Speaker-attributed SRT saved to {output_srt_path}")
+        return output_srt_path
+
+    def seconds_to_srt_time(self, seconds: float) -> str:
+        """Convert seconds to SRT timestamp format"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        seconds = seconds % 60
+        milliseconds = int((seconds - int(seconds)) * 1000)
+        seconds = int(seconds)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
 
 class ProfessionalTranscriber:
     """Professional-grade transcription system using Faster-Whisper"""
 
-    def __init__(self, model_size: str = "large-v3", device: str = "cuda", compute_type: str = "float16"):
+    def __init__(self, model_size: str = "large-v3", device: str = "cuda", compute_type: str = "float16", pyannote_token: str = None):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
@@ -182,6 +269,10 @@ class ProfessionalTranscriber:
             cpu_threads=8,
             num_workers=4
         )
+        if pyannote_token:
+            self.diarizer = SpeakerDiarizer(pyannote_token)
+        else:
+            self.diarizer = None
         logger.info("Model loaded successfully")
 
     def transcribe_audio(self, audio_path: str, language: str = "en",
@@ -270,13 +361,6 @@ class ProfessionalTranscriber:
 
         return results
 
-
-
-# // single spcae between words
-
-
-
-
     def generate_srt(self, results: Dict[str, Any], output_path: str = None, max_words_per_line: int = 5) -> str:
         """Generate SRT subtitle file with a maximum number of words per line, using word-level timestamps if available.
         Ensures only single spaces between words in each line.
@@ -342,7 +426,24 @@ class ProfessionalTranscriber:
         logger.info(f"SRT file saved: {output_path}")
         return output_path
 
+    def generate_speaker_attributed_srt(self, audio_path: str, transcription_results: Dict[str, Any], output_srt_path: str):
+        """
+        Generate a speaker-attributed SRT file by performing diarization and merging
+        with transcription word timestamps.
+        Requires self.diarizer to be initialized.
+        """
+        if self.diarizer is None:
+            raise RuntimeError("Speaker diarizer is not initialized. Provide a pyannote token during initialization.")
 
+        # Perform diarization
+        speaker_segments = self.diarizer.diarize_audio(audio_path)
+
+        # Merge diarization with transcription word timestamps and output SRT
+        return self.diarizer.merge_transcript_with_speakers(
+            whisper_segments=transcription_results["segments"],
+            speaker_segments=speaker_segments,
+            output_srt_path=output_srt_path
+        )
 
 
     def seconds_to_srt_time(self, seconds: float) -> str:
@@ -352,7 +453,6 @@ class ProfessionalTranscriber:
         seconds = seconds % 60
         milliseconds = int((seconds - int(seconds)) * 1000)
         seconds = int(seconds)
-
         return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
     
 

@@ -2,6 +2,7 @@ import streamlit as st
 import os
 from pathlib import Path
 import json
+import subprocess
 from transcription_system import ProfessionalTranscriber
 import urllib.parse
 
@@ -29,19 +30,48 @@ transcriber = ProfessionalTranscriber()
 st.sidebar.title("🎙️ Upload Audio/Video")
 uploaded_file = st.sidebar.file_uploader("Upload your file", type=["mp3", "wav", "mp4", "m4a"])
 
+def convert_to_wav(input_path: Path, output_path: Path):
+    """Converts audio/video file to WAV format (mono, 16kHz)."""
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",  # overwrite if exists
+                "-i", str(input_path),
+                "-ac", "1",      # mono channel
+                "-ar", "16000",  # 16 kHz
+                str(output_path)
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError:
+        st.error("❌ Audio conversion failed. Please ensure ffmpeg is installed.")
+        raise
+
+
 if uploaded_file:
-    file_path = AUDIO_DIR / uploaded_file.name
-    with open(file_path, "wb") as f:
+    original_path = AUDIO_DIR / uploaded_file.name
+    with open(original_path, "wb") as f:
         f.write(uploaded_file.read())
     st.sidebar.success(f"Uploaded: {uploaded_file.name}")
 
-    with st.spinner("Transcribing..."):
-        result = transcriber.transcribe_audio(str(file_path))
-        srt_path = TRANSCRIPT_DIR / f"{file_path.stem}.srt"
-        transcriber.generate_srt(result, str(srt_path))
+    # Convert to .wav
+    wav_path = AUDIO_DIR / f"{original_path.stem}.wav"
+    if original_path.suffix.lower() != ".wav":
+        with st.spinner("Converting to WAV..."):
+            convert_to_wav(original_path, wav_path)
+    else:
+        wav_path = original_path
 
-    summary_data[file_path.name] = {
-        "audio_path": str(file_path),
+    # Transcription
+    with st.spinner("Transcribing..."):
+        result = transcriber.transcribe_audio(str(wav_path))
+        srt_path = TRANSCRIPT_DIR / f"{wav_path.stem}.srt"
+        transcriber.generate_speaker_attributed_srt(str(wav_path), result, str(srt_path))
+
+    summary_data[wav_path.name] = {
+        "audio_path": str(wav_path),
         "srt_path": str(srt_path),
         "full_text": result['full_text'],
         "language": result['language'],
@@ -54,7 +84,7 @@ if uploaded_file:
 
 
 # ---- Routing: Main Grid View vs Detail View ----
-query_params = st.query_params()
+query_params = st.experimental_get_query_params()
 selected_file = query_params.get("file", [None])[0]
 
 if selected_file:
@@ -76,7 +106,8 @@ if selected_file:
                 with st.spinner("Re-transcribing..."):
                     result = transcriber.transcribe_audio(data["audio_path"])
                     srt_path = TRANSCRIPT_DIR / f"{Path(data['audio_path']).stem}.srt"
-                    transcriber.generate_srt(result, str(srt_path))
+                    # transcriber.generate_srt(result, str(srt_path))
+                    transcriber.generate_speaker_attributed_srt(str(file_path), result, str(srt_path))
                     summary_data[selected_file] = {
                         "audio_path": data["audio_path"],
                         "srt_path": str(srt_path),
