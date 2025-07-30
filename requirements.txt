@@ -1,0 +1,6 @@
+streamlit 
+faster-whisper 
+librosa 
+webrtcvad 
+soundfile 
+scipy
