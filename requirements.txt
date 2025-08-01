@@ -1,6 +1,8 @@
 streamlit 
 faster-whisper 
 librosa 
-webrtcvad 
+webrtcvad-wheels
 soundfile 
 scipy
+torch
+torchaudio

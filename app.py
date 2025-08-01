@@ -54,7 +54,7 @@ if uploaded_file:
 
 
 # ---- Routing: Main Grid View vs Detail View ----
-query_params = st.query_params()
+query_params = st.experimental_get_query_params()
 selected_file = query_params.get("file", [None])[0]
 
 if selected_file:
