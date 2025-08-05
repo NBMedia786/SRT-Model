@@ -1,9 +1,14 @@
 name: RunPod Pod Scheduler
 
+# on:
+#   schedule:
+#     - cron: '30 8 * * *'   # 2:00pm IST (start pod)
+#     - cron: '30 10 * * *'  # 4:00pm IST (stop pod)
+
 on:
   schedule:
-    - cron: '30 8 * * *'   # 2:00pm IST (start pod)
-    - cron: '30 10 * * *'  # 4:00pm IST (stop pod)
+    - cron: '13 10 * * *'   # 3:43pm IST (start pod)
+    - cron: '20 10 * * *'   # 3:50pm IST (stop pod)
 
 jobs:
   start-pod:
