@@ -1,0 +1,29 @@
+name: RunPod Pod Scheduler
+
+on:
+  schedule:
+    - cron: '30 8 * * *'   # 2:00pm IST (start pod)
+    - cron: '30 10 * * *'  # 4:00pm IST (stop pod)
+
+jobs:
+  start-pod:
+    if: github.event.schedule == '30 8 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start RunPod Pod
+        run: |
+          curl -X POST "https://api.runpod.io/graphql" \
+          -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          --data '{"query":"mutation { podResume(id: \"u9spxmh219zudt\") { id status } }"}'
+
+  stop-pod:
+    if: github.event.schedule == '30 10 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop RunPod Pod
+        run: |
+          curl -X POST "https://api.runpod.io/graphql" \
+          -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          --data '{"query":"mutation { podStop(id: \"u9spxmh219zudt\") { id status } }"}'
