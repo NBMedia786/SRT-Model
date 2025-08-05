@@ -1,0 +1,16 @@
+name: RunPod Stop Pod
+
+on:
+  schedule:
+    - cron: '40 12 * * *'   # 6:10pm IST (12:40 UTC)
+
+jobs:
+  stop-pod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop RunPod Pod
+        run: |
+          curl -X POST "https://api.runpod.io/graphql" \
+          -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          --data '{"query":"mutation { podStop(id: \"hl2kbew840rd5b\") { id status } }"}'
