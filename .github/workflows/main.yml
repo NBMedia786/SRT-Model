@@ -1,0 +1,47 @@
+name: RunPod Pod Scheduler
+
+on:
+  schedule:
+    - cron: '30 9 * * *'   # 3:00 PM IST (Start)
+    - cron: '30 11 * * *'  # 5:00 PM IST (Stop)
+
+jobs:
+  start-pod:
+    if: github.event.schedule == '30 9 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start RunPod Pod
+        run: |
+          echo "▶️ Starting pod..."
+          curl -X POST "https://api.runpod.io/graphql" \
+            -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data '{"query":"mutation { podResume(input: { podId: \"hl2kbew840rd5b\" }) { id } }"}'
+
+      - name: Check Pod Status After Start
+        run: |
+          echo "📡 Checking pod status after resume..."
+          curl -X POST "https://api.runpod.io/graphql" \
+            -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data '{"query":"{ pod(podId: \"hl2kbew840rd5b\") { id desiredStatus runtimeStatus } }"}'
+
+  stop-pod:
+    if: github.event.schedule == '30 11 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop RunPod Pod
+        run: |
+          echo "⛔ Stopping pod..."
+          curl -X POST "https://api.runpod.io/graphql" \
+            -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data '{"query":"mutation { podStop(input: { podId: \"hl2kbew840rd5b\" }) { id } }"}'
+
+      - name: Check Pod Status After Stop
+        run: |
+          echo "📡 Checking pod status after stop..."
+          curl -X POST "https://api.runpod.io/graphql" \
+            -H "Authorization: ${{ secrets.RUNPOD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data '{"query":"{ pod(podId: \"hl2kbew840rd5b\") { id desiredStatus runtimeStatus } }"}'
