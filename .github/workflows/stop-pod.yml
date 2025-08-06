@@ -2,7 +2,7 @@ name: RunPod Stop Pod
 
 on:
   schedule:
-    - cron: '40 12 * * *'   # 6:10pm IST (12:40 UTC)
+    - cron: '30 4 * * *'   # 10:00 AM IST (04:30 UTC)
 
 jobs:
   stop-pod:
